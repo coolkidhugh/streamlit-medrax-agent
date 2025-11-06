@@ -3,110 +3,188 @@ from PIL import Image
 import os
 import requests
 
-# --- 1. 配置和函数定义 ---
+# --- 核心 Agent 依赖 ---
+from langchain_deepseek import ChatDeepSeek
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain_core.messages import HumanMessage, AIMessage
+
+# --- 导入我们创建的工具 ---
+try:
+    from tools import all_tools
+except ImportError:
+    st.error("严重错误: 无法导入 'tools.py'。请确保该文件存在于您的仓库中。")
+    st.stop()
+
+# --- 1. 配置 ---
 
 # DeepSeek API 的 URL 和模型名称
-DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-MODEL_NAME = "deepseek-chat"
+MODEL_NAME = "deepseek-chat" # 确保这个模型支持 Tool Calling
 
 # (关键) 从 Streamlit Secrets 或本地环境变量中安全地读取 API 密钥
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-def get_deepseek_response(user_prompt):
-    """
-    调用 DeepSeek API 并返回模型的回复。
+# 临时文件目录 (我们稍后需要将其添加到 .gitignore)
+TEMP_DIR = "temp" 
+if not os.path.exists(TEMP_DIR):
+    os.makedirs(TEMP_DIR)
+
+
+# --- 2. 构建 Agent "大脑" ---
+
+if DEEPSEEK_API_KEY:
+    # 1. 初始化 LLM (大脑)
+    llm = ChatDeepSeek(model=MODEL_NAME, api_key=DEEPSEEK_API_KEY)
     
-    参数:
-        user_prompt (str): 用户的输入问题。
-        
-    返回:
-        str: DeepSeek 模型的回复内容或错误信息。
+    # 2. 获取工具列表 (手脚)
+    tools = all_tools
+
+    # 3. 创建 Prompt (灵魂/指令)
+    # 这是最关键的部分，它告诉 Agent 它是谁，它该做什么。
+    system_prompt = """
+    你是一个名为 MedRAX 的高级医疗影像分析智能体。
+    你的任务是帮助用户分析胸部 X 光片。
+
+    你将收到以下信息：
+    1.  一个用户问题 (`input`)。
+    2.  一个本地图像的文件路径 (`image_path`)。
+    3.  聊天记录 (`chat_history`)。
+
+    你的工作流程是：
+    1.  仔细理解用户的 `input`。
+    2.  查看你可用的工具 (`tools`)。
+    3.  **你必须使用你的工具来分析图像并回答问题。** 不要凭空捏造答案。
+    4.  在调用任何工具时，你**必须**将 `image_path` 作为第一个参数传递。
+    5.  `classify_lesion_tool` 工具用于分类或回答“是否有什么”的问题。
+    6.  `segment_image_tool` 工具用于定位或“圈出”病灶。
+    7.  在调用 `segment_image_tool` 之前，你最好先调用 `classify_lesion_tool` 来获取病灶的描述。
+    8.  `segment_image_tool` 会返回一个*新*的、已标记的图像路径 (例如: 'segmented_result.png')。
+        在你的最终回复中，你必须告诉用户这个新文件的路径。
+    9.  用中文回复用户。
     """
-    if not DEEPSEEK_API_KEY:
-        st.error("错误：DEEPSEEK_API_KEY 未配置。请在 Streamlit Community Cloud 的 Secrets 中设置它。")
-        return None
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
-    }
-    
-    # 构造发送给 API 的消息体
-    # 注意：我们目前还没有把图像信息传给模型
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            # 系统提示，引导模型的角色和行为
-            {"role": "system", "content": "你是一名专业的医疗影像分析助手。请根据用户的问题提供简洁、准确的分析和建议。"},
-            # 用户的具体问题
-            {"role": "user", "content": user_prompt}
-        ]
-    }
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        # 'image_path' 将作为上下文传递给 Agent
+        ("human", "问题: {input}\n(请分析这个图像: {image_path})"),
+        MessagesPlaceholder(variable_name="agent_scratchpad"), # Agent 思考/工具输出的地方
+    ])
 
-    try:
-        # 发送 POST 请求
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
-        
-        # 检查 HTTP 响应状态码
-        if response.status_code == 200:
-            result = response.json()
-            # 提取并返回模型生成的内容
-            return result['choices'][0]['message']['content']
-        else:
-            # 如果 API 返回错误，显示错误信息
-            error_message = f"API 请求失败，状态码: {response.status_code}\n响应内容: {response.text}"
-            st.error(error_message)
-            return None
-            
-    except requests.exceptions.RequestException as e:
-        # 捕获网络连接等异常
-        st.error(f"请求时发生网络异常: {e}")
-        return None
+    # 4. 创建 Agent (大脑+手脚)
+    agent = create_tool_calling_agent(llm, tools, prompt_template)
 
-# --- 2. Streamlit 界面布局 ---
+    # 5. 创建 Agent 执行器 (运行循环)
+    # verbose=True 会在日志中打印 Agent 的思考过程，方便调试
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+else:
+    # 如果没有 API 密钥，则不创建 Agent
+    agent_executor = None
+
+# --- 3. Streamlit 界面 ---
 
 st.set_page_config(page_title="MedRAX 智能影像分析", layout="wide")
-st.title("🩺 MedRAX 智能影像分析 (Demo)")
+st.title("🩺 MedRAX 智能影像分析 (Agent 驱动版)")
 
 with st.sidebar:
-    st.header("上传您的影像")
+    st.header("1. 上传影像")
     uploaded_file = st.file_uploader("请在此处上传胸部 X 光片...", type=["jpg", "jpeg", "png"])
-
+    
     if uploaded_file:
         image = Image.open(uploaded_file)
         st.image(image, caption="已上传的 X 光片", use_column_width=True)
+        
+    st.header("2. API 状态")
+    if DEEPSEEK_API_KEY:
+        st.success("DeepSeek API 密钥已配置！")
+    else:
+        st.error("API 密钥未配置！")
+        st.info("请在 Streamlit Cloud 的 'Secrets' 中添加 `DEEPSEEK_API_KEY = 'sk-...'`")
 
-# 初始化或显示聊天记录
+
+# 初始化聊天记录
+# 'messages' 用于在 UI 上显示
 if 'messages' not in st.session_state:
     st.session_state.messages = []
+    
+# 'agent_history' 用于给 LangChain Agent 提供记忆
+if 'agent_history' not in st.session_state:
+    st.session_state.agent_history = []
 
+# 显示历史消息
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # 如果消息是 AI 生成的，并且包含了图片，就显示图片
+        if "image_path" in message:
+            st.image(message["image_path"], caption="AI 标记的图像")
 
-# --- 3. 核心交互逻辑 ---
+
+# --- 4. 核心交互逻辑 ---
 
 if prompt := st.chat_input("您想问什么？(例如：这张片子正常吗？)"):
     
+    # 检查1：是否上传了图片
     if uploaded_file is None:
         st.warning("请先在左侧上传一张 X 光片。")
-    elif not DEEPSEEK_API_KEY:
-        # 这个检查在函数内部也有，但在这里可以提供更即时的反馈
-        st.error("管理员未配置 API 密钥，应用无法工作。")
+    # 检查2：Agent 是否已成功初始化
+    elif agent_executor is None:
+        st.error("错误：Agent 执行器未初始化。请检查 API 密钥。")
     else:
-        # 将用户消息添加到聊天记录并显示
+        # --- 准备阶段 ---
+        
+        # 1. 保存上传的文件到临时路径，因为工具需要一个文件路径
+        temp_image_path = os.path.join(TEMP_DIR, uploaded_file.name)
+        with open(temp_image_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        # 2. 在 UI 上显示用户消息
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # 调用后端获取回复
+        # --- 执行阶段 ---
         with st.chat_message("assistant"):
-            with st.spinner("智能体正在思考中..."):
-                # *** 这是本次更新的核心 ***
-                # 调用我们新创建的函数来获取真实回复
-                response_text = get_deepseek_response(prompt)
+            with st.spinner("智能体正在思考并调用工具..."):
                 
-                if response_text:
+                # 准备 Agent 的输入
+                agent_input = {
+                    "input": prompt,
+                    "image_path": temp_image_path,
+                    "chat_history": st.session_state.agent_history
+                }
+                
+                # 3. (关键) 调用 Agent 执行器
+                try:
+                    response = agent_executor.invoke(agent_input)
+                    response_text = response["output"]
+                    
+                    # 4. 更新 Agent 自己的记忆
+                    st.session_state.agent_history.append(HumanMessage(content=prompt))
+                    st.session_state.agent_history.append(AIMessage(content=response_text))
+                    
+                    # --- 响应阶段 ---
+                    
+                    # 5. 检查 Agent 的回复是否提到了“已标记”的图片
+                    # (这是基于我们 'tools.py' 中返回的硬编码 'segmented_result.png')
+                    new_image_path = None
+                    if "segmented_result.png" in response_text:
+                        if os.path.exists("segmented_result.png"):
+                            new_image_path = "segmented_result.png"
+                    
+                    # 6. 在 UI 上显示最终回复
                     st.markdown(response_text)
-                    # 将助手的有效回复也加入聊天记录
-                    st.session_state.messages.append({"role": "assistant", "content": response_text})
+                    if new_image_path:
+                        st.image(new_image_path, caption="AI 标记的图像")
+
+                    # 7. 保存带图片路径的 UI 消息
+                    ui_message = {"role": "assistant", "content": response_text}
+                    if new_image_path:
+                        ui_message["image_path"] = new_image_path
+                    st.session_state.messages.append(ui_message)
+
+                except Exception as e:
+                    error_msg = f"Agent 执行出错: {e}"
+                    st.error(error_msg)
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
