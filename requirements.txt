@@ -1,19 +1,11 @@
-streamlit
-requests
-pillow
+streamlit==1.39.0
+requests==2.32.3
+pillow==10.3.0
 
---- LangChain Packages ---
+--- Pinned LangChain Packages ---
 
-We only list the "top-level" packages.
+We are specifying exact versions known to be stable
 
-'langchain' will pull in its dependencies (core, community, agents).
-
-langchain
-
-LangGraph is a separate package.
-
-langgraph
-
-The specific LLM integration.
-
-langchain-deepseek
+langchain==0.2.1
+langgraph==0.1.1
+langchain-deepseek==0.0.12
