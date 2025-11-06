@@ -1,0 +1,41 @@
+--- Python Standard Ignores ---
+
+pycache/
+*.py[cod]
+*$py.class
+
+--- Virtual Environment ---
+
+venv/
+ENV/
+env/
+.venv/
+
+--- IDE / Editor Files ---
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+--- Dependencies ---
+
+*.egg-info/
+dist/
+build/
+
+--- IMPORTANT: Our Project's Secrets ---
+
+忽略包含 API 密钥的环境变量文件
+
+.env
+
+--- IMPORTANT: Our Project's Temp Files ---
+
+忽略 app.py 保存上传图片的临时文件夹
+
+/temp/
+
+忽略 tools.py 生成的模拟分割图
+
+segmented_result.png
