@@ -1,8 +1,14 @@
 streamlit
 requests
+pillow
 
-# --- 新增 Agent 框架 ---
+--- LangChain Core Components ---
+
+明确列出所有 LangChain 的核心依赖
+
 langchain
+langchain-core
+langchain-community
+langchain-agents     # <<< 这是修复错误的关键！
 langchain-deepseek
-langgraph # MedRAX 依赖 langgraph
-pillow # 用于处理图片
+langgraph
