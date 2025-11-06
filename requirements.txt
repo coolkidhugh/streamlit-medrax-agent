@@ -2,13 +2,18 @@ streamlit
 requests
 pillow
 
---- LangChain Core Components ---
+--- LangChain Packages ---
 
-明确列出所有 LangChain 的核心依赖
+We only list the "top-level" packages.
+
+'langchain' will pull in its dependencies (core, community, agents).
 
 langchain
-langchain-core
-langchain-community
-langchain-agents     # <<< 这是修复错误的关键！
-langchain-deepseek
+
+LangGraph is a separate package.
+
 langgraph
+
+The specific LLM integration.
+
+langchain-deepseek
