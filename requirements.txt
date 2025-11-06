@@ -4,7 +4,9 @@ pillow==10.3.0
 
 --- Pinned LangChain Packages ---
 
-We are specifying exact versions known to be stable
+我们正在指定已知稳定的确切版本
+
+确保每个包都在单独的一行
 
 langchain==0.2.1
 langgraph==0.1.1
