@@ -1,0 +1,8 @@
+streamlit
+requests
+
+# --- 新增 Agent 框架 ---
+langchain
+langchain-deepseek
+langgraph # MedRAX 依赖 langgraph
+pillow # 用于处理图片
